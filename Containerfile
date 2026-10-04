@@ -7,7 +7,7 @@ FROM node:22-bookworm@sha256:17b7fd60fd812617654c64b95f9b2dde94f103313073b672bc4
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=dependencies --chown=node:node /app/node_modules ./node_modules
-COPY --chown=node:node package.json cli.mjs interactive.mjs local.mjs dmarc.mjs transport.mjs mcp-policy.mjs inspect-auth.mjs initialize-summary.mjs ./
+COPY --chown=node:node package.json cli.mjs interactive.mjs local.mjs dmarc.mjs transport.mjs mcp-policy.mjs inspect-auth.mjs initialize-summary.mjs owner-read-check.mjs ./
 USER node
 # No listener, exposed port, writable config, credential file or background service.
 # A private JSON envelope arrives through stdin; safe bounded results leave stdout.
