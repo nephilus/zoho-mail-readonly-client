@@ -1,21 +1,22 @@
 import {Client,StreamableHTTPClientTransport} from '@modelcontextprotocol/client';
 import {boundedBytes,getDmarcReport} from './dmarc.mjs';
 import {createTransport,safeDiagnostic} from './transport.mjs';
+import {mcpEndpoint} from './mcp-policy.mjs';
 
 export const READ_TOOLS=Object.freeze(['getMailAccounts','getAccountDetails','listEmails','SearchEmails','getMessageContent','getMessageAttachmentInfo','getAllFolders','getFolder']);
 
 class LocalFailure extends Error{constructor(reason){super('Local Zoho request unavailable');this.reason=reason;}}
 function refuse(reason){throw new LocalFailure(reason);}
 export function safeLocalError(e){return {ok:false,status:e instanceof LocalFailure?e.reason:e?.name==='UnauthorizedError'?'mcp_authorization_required':['AbortError','TimeoutError'].includes(e?.name)?'timeout':'request_failed'};}
-export function endpoint(value){let url;try{url=new URL(value);}catch{refuse('invalid_endpoint');}if(url.protocol!=='https:'||url.hostname!=='mcp.zoho.com'||url.port||url.username||url.password||url.hash)refuse('invalid_endpoint');return url;}
-function secretValues(config){const values=[config.mcpUrl,config.mcpBearerToken,config.rest?.ZOHO_CLIENT_ID,config.rest?.ZOHO_CLIENT_SECRET,config.rest?.ZOHO_REFRESH_TOKEN];if(config.mcpUrl){const url=endpoint(config.mcpUrl);for(const v of url.searchParams.values())values.push(v);for(const p of url.pathname.split('/'))if(p.length>20)values.push(p);}return [...new Set(values.filter(v=>typeof v==='string'&&v.length>3).flatMap(v=>[v,encodeURIComponent(v)]))].sort((a,b)=>b.length-a.length);}
+export function endpoint(value,mcpHost){try{return mcpEndpoint({mcpUrl:value,mcpHost});}catch{refuse('invalid_endpoint');}}
+function secretValues(config){const values=[config.mcpUrl,config.mcpBearerToken,config.rest?.ZOHO_CLIENT_ID,config.rest?.ZOHO_CLIENT_SECRET,config.rest?.ZOHO_REFRESH_TOKEN];if(config.mcpUrl){const url=endpoint(config.mcpUrl,config.mcpHost);for(const v of url.searchParams.values())values.push(v);for(const p of url.pathname.split('/'))if(p.length>20)values.push(p);}return [...new Set(values.filter(v=>typeof v==='string'&&v.length>3).flatMap(v=>[v,encodeURIComponent(v)]))].sort((a,b)=>b.length-a.length);}
 export function sanitize(value,config){
  const secrets=secretValues(config);const redact=text=>secrets.reduce((s,k)=>s.split(k).join('[REDACTED]'),text);
  const walk=(v,depth=0)=>{if(depth>15)return '[DEPTH LIMIT]';if(typeof v==='string')return redact(v).slice(0,50000);if(Array.isArray(v))return v.slice(0,50).map(x=>walk(x,depth+1));if(v&&typeof v==='object')return Object.fromEntries(Object.entries(v).slice(0,100).filter(([k])=>!/(token|secret|authorization|api.?key|password|credential)/i.test(k)).map(([k,x])=>[redact(k),walk(x,depth+1)]));return v;};
  const result=walk(value);if(JSON.stringify(result).length>100000)refuse('result_limit');return result;
 }
 export function guardedFetch(config,fetcher=fetch){
- const expected=endpoint(config.mcpUrl);
+ const expected=endpoint(config.mcpUrl,config.mcpHost);
  return async(input,init={})=>{
   let url;try{url=new URL(input instanceof Request?input.url:String(input));}catch{refuse('endpoint_denied');}
   if(url.href!==expected.href||!['GET','POST','DELETE'].includes(init.method??'GET'))refuse('endpoint_denied');
@@ -49,7 +50,7 @@ export async function execute(config,request,{fetcher=fetch,clientFactory=()=>ne
  }
  if(!['list_tools','call'].includes(request.action))refuse('unsupported_action');
  if(request.action==='call'&&!READ_TOOLS.includes(request.name))refuse('tool_denied');
- endpoint(config.mcpUrl);const client=clientFactory();const transport=new StreamableHTTPClientTransport(endpoint(config.mcpUrl),{fetch:guardedFetch(config,fetcher),requestInit:config.mcpBearerToken?{headers:{Authorization:'Bearer '+config.mcpBearerToken}}:{}});
+ endpoint(config.mcpUrl,config.mcpHost);const client=clientFactory();const transport=new StreamableHTTPClientTransport(endpoint(config.mcpUrl,config.mcpHost),{fetch:guardedFetch(config,fetcher),requestInit:config.mcpBearerToken?{headers:{Authorization:'Bearer '+config.mcpBearerToken}}:{}});
  try{
   await client.connect(transport);const discovery=await client.listTools();
   if(discovery.tools.length>100)refuse('tool_count_limit');
