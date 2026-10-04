@@ -2,7 +2,7 @@ import {Client,StreamableHTTPClientTransport} from '@modelcontextprotocol/client
 import {boundedBytes,getDmarcReport} from './dmarc.mjs';
 import {createTransport,safeDiagnostic} from './transport.mjs';
 import {mcpEndpoint} from './mcp-policy.mjs';
-import {READ_TOOLS,canonicalReadTool,schemaAccepts} from './read-tool-policy.mjs';
+import {READ_TOOLS,canonicalReadTool,schemaAccepts,mappedReadArgs} from './read-tool-policy.mjs';
 
 export {READ_TOOLS};
 
@@ -64,12 +64,12 @@ export async function execute(config,request,{fetcher=fetch,clientFactory=()=>ne
   const args=request.arguments??{};if(!args||Array.isArray(args)||typeof args!=='object'||JSON.stringify(args).length>8192)refuse('invalid_arguments');
   for(const [key,value] of Object.entries(args)){if(/account.?id/i.test(key)&&String(value)!==account)refuse('account_denied');if(/^(limit|count|page.?size)$/i.test(key)&&(!Number.isInteger(value)||value<1||value>50))refuse('paging_denied');if(/(mark.?read|read.?status|update|delete|send)/i.test(key))refuse('argument_denied');}
   const accountTool=discovery.tools.find(t=>canonicalReadTool(t.name)==='getMailAccounts');if(!accountTool)refuse('account_verification_unavailable');
-  if(!schemaAccepts(accountTool.inputSchema,{})||!schemaAccepts(selected.inputSchema,args))refuse('schema_unsupported');
+  const wireArgs=mappedReadArgs(selected,args);if(!schemaAccepts(accountTool.inputSchema,{})||!wireArgs)refuse('schema_unsupported');
   const accounts=contents(await client.callTool({name:accountTool.name,arguments:{}}));if(!findAccount(accounts,account,config.primaryEmail))refuse('account_response_unverified');
   if(requested==='getMailAccounts')return {ok:true,result:{accountId:account,primaryEmailAddress:config.primaryEmail}};
   // Require the pinned account explicitly for account-scoped tool calls.
   if(!Object.entries(args).some(([k,v])=>/^accountId$/i.test(k)&&String(v)===account))refuse('account_argument_required');
-  return {ok:true,result:sanitize(contents(await client.callTool({name:selected.name,arguments:args})),config)};
+  return {ok:true,result:sanitize(contents(await client.callTool({name:selected.name,arguments:wireArgs})),config)};
  }finally{await client.close().catch(()=>{});}
 }
 export function restDiagnostic(e){return {ok:false,status:'rest_unavailable',diagnostic:safeDiagnostic(e)};}

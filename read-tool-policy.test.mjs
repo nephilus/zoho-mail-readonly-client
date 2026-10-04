@@ -1,12 +1,17 @@
-import test from 'node:test';import assert from 'node:assert/strict';import {READ_TOOLS,canonicalReadTool,schemaAccepts} from './read-tool-policy.mjs';import {guardedFetch} from './local.mjs';
+import test from 'node:test';import assert from 'node:assert/strict';import {READ_TOOLS,canonicalReadTool,schemaAccepts,mappedReadArgs} from './read-tool-policy.mjs';import {guardedFetch} from './local.mjs';
 test('only explicitly observed aliases map to unchanged approved semantics',()=>{
  for(const [raw,canonical]of [['ZohoMail_getMailAccounts','getMailAccounts'],['ZohoMail_getAccountDetails','getAccountDetails'],['ZohoMail_listEmails','listEmails'],['ZohoMail_SearchEmails','SearchEmails'],['ZohoMail_getMessageContent','getMessageContent'],['ZohoMail_getMessageAttachmentInfo','getMessageAttachmentInfo']])assert.equal(canonicalReadTool(raw),canonical);
  for(const raw of ['ZohoMail_sendEmail','ZohoMail_deleteEmail','ZohoMail_readMessages','Other_listEmails','ZohoMail_listEmails_extra','zohomail_listEmails','ZohoMail_getMessageDetails','ZohoMail_getAllFolders'])assert.equal(canonicalReadTool(raw),null);
  assert.equal(READ_TOOLS.length,8);
 });
-test('nested runtime schema remains refused until field semantics are verified',()=>{
+test('nested runtime schema maps only reviewed wrappers with minimal fields and bounded paging',()=>{
  const schema={type:'object',required:['path_variables','query_params'],properties:{path_variables:{type:'object',required:['accountId'],properties:{accountId:{type:'string'}}},query_params:{type:'object',required:['fields'],properties:{fields:{type:'string'},limit:{type:'integer'}}}}};
- assert.equal(schemaAccepts(schema,{path_variables:{accountId:'123'},query_params:{fields:'unverified',limit:1}}),false);
+ schema.properties.query_params.properties.start={type:'integer'};
+ const tool={name:'ZohoMail_listEmails',inputSchema:schema};
+ assert.deepEqual(mappedReadArgs(tool,{accountId:'123'}),{path_variables:{accountId:'123'},query_params:{fields:'messageId',limit:1,start:1}});
+ for(const values of [{accountId:'123',limit:51},{accountId:'123',markRead:true},{path_variables:{accountId:'123'}},{accountId:'123',fields:'subject'}])assert.equal(mappedReadArgs(tool,values),null);
+ assert.equal(mappedReadArgs({...tool,name:'Other_listEmails'},{accountId:'123'}),null);
+ assert.equal(schemaAccepts(schema,{path_variables:{accountId:123},query_params:{fields:'messageId',limit:1}}),false);
 });
 test('guard accepts exact observed read alias and rejects prefixed writes without transmission',async()=>{
  const config={mcpUrl:'https://mcp.zoho.com/synthetic'};let calls=0;const guarded=guardedFetch(config,async()=>{calls++;return Response.json({})});await guarded(config.mcpUrl,{method:'POST',body:JSON.stringify({method:'tools/call',params:{name:'ZohoMail_SearchEmails'}})});assert.equal(calls,1);

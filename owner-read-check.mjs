@@ -1,10 +1,11 @@
 import {Client,StreamableHTTPClientTransport} from '@modelcontextprotocol/client';
 import {guardedFetch,sanitize,safeLocalError} from './local.mjs';
-import {canonicalReadTool,schemaAccepts} from './read-tool-policy.mjs';
+import {canonicalReadTool,schemaAccepts,mappedReadArgs} from './read-tool-policy.mjs';
 import {mcpEndpoint} from './mcp-policy.mjs';
 
 const statusError=status=>Object.assign(Error('Read check stopped'),{safeStatus:status});
 function schemaArgs(tool,values){
+ if(tool?.inputSchema?.properties?.path_variables)return mappedReadArgs(tool,values);
  const schema=tool?.inputSchema;if(schema?.type!=='object'||!Array.isArray(schema.required??[])||(schema.required??[]).some(key=>!Object.hasOwn(values,key)))return null;
  const args={};for(const [key,value]of Object.entries(values)){const spec=schema.properties?.[key];if(!spec)continue;if(spec.type!==(typeof value==='number'?'integer':'string'))return null;if(typeof value==='number'&&((spec.minimum??-Infinity)>value||(spec.maximum??Infinity)<value))return null;args[key]=value;}
  if(!schemaAccepts(schema,args))return null;return args;
@@ -29,7 +30,7 @@ function schemaStatus(tool,config){
  if(tool.inputSchema?.type!=='object')return 'unsupported';
  if(canonicalReadTool(tool.name)==='getMailAccounts')return schemaArgs(tool,{})?'compatible':'unsupported';
  if(canonicalReadTool(tool.name)==='listEmails'){
-  const props=tool.inputSchema.properties??{};if(props.accountId?.type!=='string'||props.limit?.type!=='integer')return 'unsupported';
+  const root=tool.inputSchema.properties??{};const props=root.path_variables?{...root.path_variables.properties,...root.query_params?.properties}:root;if(props.accountId?.type!=='string'||props.limit?.type!=='integer')return 'unsupported';
   const values={accountId:'0',limit:1};if(props.start)values.start=1;if(props.folderId&&config.folderId)values.folderId=config.folderId;
   return schemaArgs(tool,values)?'compatible':'unsupported';
  }return 'not_used';
@@ -49,12 +50,12 @@ export async function ownerReadCheck(config,{fetcher=fetch,clientFactory=()=>new
   const accounts=tools.find(t=>canonicalReadTool(t.name)==='getMailAccounts'),list=tools.find(t=>canonicalReadTool(t.name)==='listEmails');
   if(!accounts||!list)throw statusError('required_tool_unavailable');
   const accountArgs=schemaArgs(accounts,{});if(!accountArgs)throw statusError('account_schema_unsupported');
-  const props=list.inputSchema?.properties??{};
+  const root=list.inputSchema?.properties??{};const props=root.path_variables?{...root.path_variables.properties,...root.query_params?.properties}:root;
   if(props.accountId?.type!=='string'||props.limit?.type!=='integer')throw statusError('list_schema_unsupported');
   const owner=ownerAccount(decoded(await client.callTool({name:accounts.name,arguments:accountArgs})),config.primaryEmail);summary.ownerMatched=true;
   const values={accountId:owner,limit:1};if(props.start)values.start=1;
   if(props.folderId&&config.folderId&&/^\d{1,30}$/.test(config.folderId))values.folderId=config.folderId;
-  const args=schemaArgs(list,values);if(!args||args.accountId!==owner||args.limit!==1)throw statusError('list_schema_unsupported');
+  const args=schemaArgs(list,values);if(!args||(args.path_variables?.accountId??args.accountId)!==owner||(args.query_params?.limit??args.limit)!==1)throw statusError('list_schema_unsupported');
   const parts=decoded(await client.callTool({name:list.name,arguments:args}));if(parts.length!==1)throw statusError('tool_result_shape_unverified');
   const payload=parts[0];if(payload?.status?.code&&payload.status.code!==200)throw statusError('provider_tool_error');
   const rows=Array.isArray(payload)?payload:payload?.data;if(!Array.isArray(rows)||rows.length>1)throw statusError('message_bound_unverified');
