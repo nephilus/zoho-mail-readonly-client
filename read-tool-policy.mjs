@@ -1,7 +1,7 @@
 export const READ_TOOLS=Object.freeze(['getMailAccounts','getAccountDetails','listEmails','SearchEmails','getMessageContent','getMessageAttachmentInfo','getAllFolders','getFolder']);
-// These four exact names were observed in the owner's runtime inventory.
+// These exact names were observed in the owner's runtime inventory.
 // No generic prefix stripping, case folding, or new read semantics.
-const aliases=Object.freeze({ZohoMail_listEmails:'listEmails',ZohoMail_SearchEmails:'SearchEmails',ZohoMail_getMessageContent:'getMessageContent',ZohoMail_getMessageAttachmentInfo:'getMessageAttachmentInfo'});
+const aliases=Object.freeze({ZohoMail_getMailAccounts:'getMailAccounts',ZohoMail_getAccountDetails:'getAccountDetails',ZohoMail_listEmails:'listEmails',ZohoMail_SearchEmails:'SearchEmails',ZohoMail_getMessageContent:'getMessageContent',ZohoMail_getMessageAttachmentInfo:'getMessageAttachmentInfo'});
 export function canonicalReadTool(name){return typeof name==='string'?(READ_TOOLS.includes(name)?name:Object.hasOwn(aliases,name)?aliases[name]:null):null;}
 export function schemaAccepts(schema,args){
  if(schema?.type!=='object'||schema.$ref||schema.oneOf||schema.anyOf||schema.allOf||!Array.isArray(schema.required??[])||!args||Array.isArray(args)||typeof args!=='object')return false;

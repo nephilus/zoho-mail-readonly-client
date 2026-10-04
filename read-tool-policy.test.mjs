@@ -1,8 +1,12 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {READ_TOOLS,canonicalReadTool,schemaAccepts} from './read-tool-policy.mjs';import {guardedFetch} from './local.mjs';
 test('only explicitly observed aliases map to unchanged approved semantics',()=>{
- for(const [raw,canonical]of [['ZohoMail_listEmails','listEmails'],['ZohoMail_SearchEmails','SearchEmails'],['ZohoMail_getMessageContent','getMessageContent'],['ZohoMail_getMessageAttachmentInfo','getMessageAttachmentInfo']])assert.equal(canonicalReadTool(raw),canonical);
- for(const raw of ['ZohoMail_sendEmail','ZohoMail_deleteEmail','ZohoMail_readMessages','Other_listEmails','ZohoMail_listEmails_extra','zohomail_listEmails','ZohoMail_getMessageDetails','ZohoMail_getMailAccounts'])assert.equal(canonicalReadTool(raw),null);
+ for(const [raw,canonical]of [['ZohoMail_getMailAccounts','getMailAccounts'],['ZohoMail_getAccountDetails','getAccountDetails'],['ZohoMail_listEmails','listEmails'],['ZohoMail_SearchEmails','SearchEmails'],['ZohoMail_getMessageContent','getMessageContent'],['ZohoMail_getMessageAttachmentInfo','getMessageAttachmentInfo']])assert.equal(canonicalReadTool(raw),canonical);
+ for(const raw of ['ZohoMail_sendEmail','ZohoMail_deleteEmail','ZohoMail_readMessages','Other_listEmails','ZohoMail_listEmails_extra','zohomail_listEmails','ZohoMail_getMessageDetails','ZohoMail_getAllFolders'])assert.equal(canonicalReadTool(raw),null);
  assert.equal(READ_TOOLS.length,8);
+});
+test('nested runtime schema remains refused until field semantics are verified',()=>{
+ const schema={type:'object',required:['path_variables','query_params'],properties:{path_variables:{type:'object',required:['accountId'],properties:{accountId:{type:'string'}}},query_params:{type:'object',required:['fields'],properties:{fields:{type:'string'},limit:{type:'integer'}}}}};
+ assert.equal(schemaAccepts(schema,{path_variables:{accountId:'123'},query_params:{fields:'unverified',limit:1}}),false);
 });
 test('guard accepts exact observed read alias and rejects prefixed writes without transmission',async()=>{
  const config={mcpUrl:'https://mcp.zoho.com/synthetic'};let calls=0;const guarded=guardedFetch(config,async()=>{calls++;return Response.json({})});await guarded(config.mcpUrl,{method:'POST',body:JSON.stringify({method:'tools/call',params:{name:'ZohoMail_SearchEmails'}})});assert.equal(calls,1);
