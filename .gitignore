@@ -1,0 +1,14 @@
+node_modules/
+.env*
+*.credential
+*.vault
+
+.private-dev/
+CONTAINER-PREPARATION.md
+runtime-config*
+secrets/
+config/
+*.pem
+*.key
+*.pfx
+*.p12

@@ -1,0 +1,11 @@
+.git
+node_modules
+.env*
+*.credential
+*.vault
+*.tar
+**/runtime-config*
+**/secrets*
+
+.private-dev
+CONTAINER-PREPARATION.md

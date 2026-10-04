@@ -1,0 +1,16 @@
+{
+  "name": "Zoho read-only client development",
+  "image": "node:22-bookworm@sha256:17b7fd60fd812617654c64b95f9b2dde94f103313073b672bc40fdad6dccbaa2",
+  "remoteUser": "node",
+  "containerUser": "node",
+  "workspaceFolder": "/workspace",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
+  "runArgs": [
+    "--cap-drop=ALL",
+    "--security-opt=no-new-privileges",
+    "--volume",
+    "zoho-local-client-deps:/workspace/node_modules:U"
+  ],
+  "postCreateCommand": "npm ci --ignore-scripts",
+  "forwardPorts": []
+}
