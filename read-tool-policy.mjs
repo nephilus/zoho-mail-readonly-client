@@ -13,7 +13,8 @@ export function schemaAccepts(schema,args,depth=0){
   if(!valid)return false;
   if(typeof value==='number'&&((spec.minimum??-Infinity)>value||(spec.maximum??Infinity)<value))return false;
   if(typeof value==='string'&&((spec.minLength??0)>value.length||(spec.maxLength??Infinity)<value.length))return false;
-  if(spec.pattern||spec.format)return false; // Do not invent support for provider-specific validation.
+  if(spec.pattern)return false;
+  if(spec.format&&(spec.format!=='int32'||spec.type!=='integer'||value< -2147483648||value>2147483647))return false;
   if(spec.enum&&(!Array.isArray(spec.enum)||!spec.enum.includes(value)))return false;
  }return true;
 }

@@ -7,11 +7,17 @@ test('only explicitly observed aliases map to unchanged approved semantics',()=>
 test('nested runtime schema maps only reviewed wrappers with minimal fields and bounded paging',()=>{
  const schema={type:'object',required:['path_variables','query_params'],properties:{path_variables:{type:'object',required:['accountId'],properties:{accountId:{type:'string'}}},query_params:{type:'object',required:['fields'],properties:{fields:{type:'string'},limit:{type:'integer'}}}}};
  schema.properties.query_params.properties.start={type:'integer'};
+ schema.properties.query_params.properties.limit.format='int32';
  const tool={name:'ZohoMail_listEmails',inputSchema:schema};
  assert.deepEqual(mappedReadArgs(tool,{accountId:'123'}),{path_variables:{accountId:'123'},query_params:{fields:'messageId',limit:1,start:1}});
  for(const values of [{accountId:'123',limit:51},{accountId:'123',markRead:true},{path_variables:{accountId:'123'}},{accountId:'123',fields:'subject'}])assert.equal(mappedReadArgs(tool,values),null);
  assert.equal(mappedReadArgs({...tool,name:'Other_listEmails'},{accountId:'123'}),null);
  assert.equal(schemaAccepts(schema,{path_variables:{accountId:123},query_params:{fields:'messageId',limit:1}}),false);
+});
+test('only observed int32 format is supported and its signed range is enforced',()=>{
+ const schema={type:'object',properties:{value:{type:'integer',format:'int32'}}};
+ assert(schemaAccepts(schema,{value:1}));assert(!schemaAccepts(schema,{value:2147483648}));assert(!schemaAccepts(schema,{value:-2147483649}));
+ assert(!schemaAccepts({type:'object',properties:{value:{type:'integer',format:'unreviewed'}}},{value:1}));
 });
 test('guard accepts exact observed read alias and rejects prefixed writes without transmission',async()=>{
  const config={mcpUrl:'https://mcp.zoho.com/synthetic'};let calls=0;const guarded=guardedFetch(config,async()=>{calls++;return Response.json({})});await guarded(config.mcpUrl,{method:'POST',body:JSON.stringify({method:'tools/call',params:{name:'ZohoMail_SearchEmails'}})});assert.equal(calls,1);
