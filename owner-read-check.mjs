@@ -64,7 +64,10 @@ export async function ownerReadCheck(config,{fetcher=fetch,clientFactory=()=>new
   const args=schemaArgs(list,values);if(!args||(args.path_variables?.accountId??args.accountId)!==owner||(args.query_params?.limit??args.limit)!==1)throw statusError('list_schema_unsupported');
   const parts=decoded(await client.callTool({name:list.name,arguments:args}));if(parts.length!==1)throw statusError('tool_result_shape_unverified');
   const payload=parts[0];if(payload?.status?.code&&payload.status.code!==200)throw statusError('provider_tool_error');
-  const rows=Array.isArray(payload)?payload:payload?.data;if(!Array.isArray(rows)||rows.length>1){summary.resultShape=resultShape(payload);throw statusError('message_bound_unverified');}
+  // Observed MCP envelope wraps the Mail API response in data once more.
+  const mail=payload?.data&&!Array.isArray(payload.data)&&Array.isArray(payload.data.data)?payload.data:payload;
+  if(mail?.status?.code&&mail.status.code!==200)throw statusError('provider_tool_error');
+  const rows=Array.isArray(mail)?mail:mail?.data;if(!Array.isArray(rows)||rows.length>1||rows.some(row=>!row||typeof row!=='object'||typeof row.messageId!=='string'||!/^\d{1,30}$/.test(row.messageId))){summary.resultShape=resultShape(payload);throw statusError('message_bound_unverified');}
   summary.messageCount=rows.length;summary.ok=true;summary.status='read_verified';return summary;
  }catch(error){summary.status=error.safeStatus??safeLocalError(error).status;return summary;}
  finally{await client?.close().catch(()=>{});}
