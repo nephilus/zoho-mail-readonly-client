@@ -2,7 +2,7 @@ import test from 'node:test';import assert from 'node:assert/strict';import {ins
 const config={mcpUrl:'https://mcp.zoho.com/server/synthetic-private-key'};
 const resourceURL='https://mcp.zoho.com/.well-known/oauth-protected-resource/server';
 test('unauthorized endpoint without metadata returns fixed safe result',async()=>{
- const result=await inspect(config,async()=>new Response('synthetic-secret',{status:401}));assert.deepEqual(result,{ok:false,status:'resource_metadata_not_advertised'});assert(!JSON.stringify(result).includes('synthetic'));
+ const result=await inspect(config,async()=>new Response('synthetic-secret',{status:401}));assert.equal(result.status,'resource_metadata_not_advertised');assert.equal(result.httpStatus,401);assert(!JSON.stringify(result).includes('synthetic'));
 });
 test('discovery uses only initialize and GET, without authorization forwarding',async()=>{
  const calls=[];const result=await inspect(config,async(url,init)=>{calls.push(String(url));assert.equal(init.redirect,'manual');assert.equal(init.headers?.Authorization,undefined);
