@@ -4,6 +4,12 @@ import {canonicalReadTool,schemaAccepts,mappedReadArgs} from './read-tool-policy
 import {mcpEndpoint} from './mcp-policy.mjs';
 
 const statusError=status=>Object.assign(Error('Read check stopped'),{safeStatus:status});
+function resultShape(value,path='root',depth=0,out=[]){
+ if(depth>5||out.length>=20)return out;
+ out.push({path,type:Array.isArray(value)?'array':value===null?'null':typeof value,...(Array.isArray(value)?{length:value.length}:{})});
+ if(value&&typeof value==='object'&&!Array.isArray(value))for(const key of ['data','result','response','body','content','output','messages','emails'])if(Object.hasOwn(value,key))resultShape(value[key],path+'.'+key,depth+1,out);
+ return out;
+}
 function schemaArgs(tool,values){
  if(tool?.inputSchema?.properties?.path_variables)return mappedReadArgs(tool,values);
  const schema=tool?.inputSchema;if(schema?.type!=='object'||!Array.isArray(schema.required??[])||(schema.required??[]).some(key=>!Object.hasOwn(values,key)))return null;
@@ -58,7 +64,7 @@ export async function ownerReadCheck(config,{fetcher=fetch,clientFactory=()=>new
   const args=schemaArgs(list,values);if(!args||(args.path_variables?.accountId??args.accountId)!==owner||(args.query_params?.limit??args.limit)!==1)throw statusError('list_schema_unsupported');
   const parts=decoded(await client.callTool({name:list.name,arguments:args}));if(parts.length!==1)throw statusError('tool_result_shape_unverified');
   const payload=parts[0];if(payload?.status?.code&&payload.status.code!==200)throw statusError('provider_tool_error');
-  const rows=Array.isArray(payload)?payload:payload?.data;if(!Array.isArray(rows)||rows.length>1)throw statusError('message_bound_unverified');
+  const rows=Array.isArray(payload)?payload:payload?.data;if(!Array.isArray(rows)||rows.length>1){summary.resultShape=resultShape(payload);throw statusError('message_bound_unverified');}
   summary.messageCount=rows.length;summary.ok=true;summary.status='read_verified';return summary;
  }catch(error){summary.status=error.safeStatus??safeLocalError(error).status;return summary;}
  finally{await client?.close().catch(()=>{});}
