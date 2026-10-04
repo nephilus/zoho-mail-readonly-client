@@ -2,8 +2,9 @@ import {Client,StreamableHTTPClientTransport} from '@modelcontextprotocol/client
 import {guardedFetch,sanitize,safeLocalError} from './local.mjs';
 import {canonicalReadTool,schemaAccepts,mappedReadArgs} from './read-tool-policy.mjs';
 import {mcpEndpoint} from './mcp-policy.mjs';
+import {toolDiagnostic} from './safe-mcp-diagnostic.mjs';
 
-const statusError=status=>Object.assign(Error('Read check stopped'),{safeStatus:status});
+const statusError=(status,diagnostic)=>Object.assign(Error('Read check stopped'),{safeStatus:status,...(diagnostic?{safeDiagnostic:diagnostic}:{})});
 function resultShape(value,path='root',depth=0,out=[]){
  if(depth>5||out.length>=20)return out;
  out.push({path,type:Array.isArray(value)?'array':value===null?'null':typeof value,...(Array.isArray(value)?{length:value.length}:{})});
@@ -17,7 +18,7 @@ function schemaArgs(tool,values){
  if(!schemaAccepts(schema,args))return null;return args;
 }
 function decoded(result){
- if(result?.isError)throw statusError('provider_tool_error');
+ if(result?.isError)throw statusError('provider_tool_error',toolDiagnostic(result));
  if(result.structuredContent&&typeof result.structuredContent==='object')return [result.structuredContent];
  const content=result?.content??[];if(content.length>10)throw statusError('tool_result_shape_unverified');
  return content.filter(c=>c.type==='text').map(c=>{if(c.text.length>200000)throw statusError('tool_result_shape_unverified');try{return JSON.parse(c.text)}catch{throw statusError('tool_result_shape_unverified')}});
@@ -69,7 +70,7 @@ export async function ownerReadCheck(config,{fetcher=fetch,clientFactory=()=>new
   if(mail?.status?.code&&mail.status.code!==200)throw statusError('provider_tool_error');
   const rows=Array.isArray(mail)?mail:mail?.data;if(!Array.isArray(rows)||rows.length>1||rows.some(row=>!row||typeof row!=='object'||typeof row.messageId!=='string'||!/^\d{1,30}$/.test(row.messageId))){summary.resultShape=resultShape(payload);throw statusError('message_bound_unverified');}
   summary.messageCount=rows.length;summary.ok=true;summary.status='read_verified';return summary;
- }catch(error){summary.status=error.safeStatus??safeLocalError(error).status;return summary;}
+ }catch(error){const safe=safeLocalError(error);summary.status=error.safeStatus??safe.status;const diagnostic=error.safeDiagnostic??safe.diagnostic;if(diagnostic)summary.transportDiagnostic=diagnostic;return summary;}
  finally{await client?.close().catch(()=>{});}
 }
 if(process.argv[1]?.endsWith('owner-read-check.mjs')){

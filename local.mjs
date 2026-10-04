@@ -3,12 +3,13 @@ import {boundedBytes,getDmarcReport} from './dmarc.mjs';
 import {createTransport,safeDiagnostic} from './transport.mjs';
 import {mcpEndpoint} from './mcp-policy.mjs';
 import {READ_TOOLS,canonicalReadTool,schemaAccepts,mappedReadArgs} from './read-tool-policy.mjs';
+import {transportStage,httpDiagnostic,networkDiagnostic,toolDiagnostic,endpointPattern} from './safe-mcp-diagnostic.mjs';
 
 export {READ_TOOLS};
 
-class LocalFailure extends Error{constructor(reason){super('Local Zoho request unavailable');this.reason=reason;}}
-function refuse(reason){throw new LocalFailure(reason);}
-export function safeLocalError(e){return {ok:false,status:e instanceof LocalFailure?e.reason:e?.name==='UnauthorizedError'?'mcp_authorization_required':['AbortError','TimeoutError'].includes(e?.name)?'timeout':'request_failed'};}
+class LocalFailure extends Error{constructor(reason,diagnostic){super('Local Zoho request unavailable');this.reason=reason;if(diagnostic)this.diagnostic=diagnostic;}}
+function refuse(reason,diagnostic){throw new LocalFailure(reason,diagnostic);}
+export function safeLocalError(e){return {ok:false,status:e instanceof LocalFailure?e.reason:e?.name==='UnauthorizedError'?'mcp_authorization_required':['AbortError','TimeoutError'].includes(e?.name)?'timeout':'request_failed',...(e instanceof LocalFailure&&e.diagnostic?{diagnostic:e.diagnostic}:{})};}
 export function endpoint(value,mcpHost){try{return mcpEndpoint({mcpUrl:value,mcpHost});}catch{refuse('invalid_endpoint');}}
 function secretValues(config){const values=[config.mcpUrl,config.mcpBearerToken,config.rest?.ZOHO_CLIENT_ID,config.rest?.ZOHO_CLIENT_SECRET,config.rest?.ZOHO_REFRESH_TOKEN];if(config.mcpUrl){const url=endpoint(config.mcpUrl,config.mcpHost);for(const v of url.searchParams.values())values.push(v);for(const p of url.pathname.split('/'))if(p.length>20)values.push(p);}return [...new Set(values.filter(v=>typeof v==='string'&&v.length>3).flatMap(v=>[v,encodeURIComponent(v)]))].sort((a,b)=>b.length-a.length);}
 export function sanitize(value,config){
@@ -21,22 +22,24 @@ export function guardedFetch(config,fetcher=fetch){
  return async(input,init={})=>{
   let url;try{url=new URL(input instanceof Request?input.url:String(input));}catch{refuse('endpoint_denied');}
   if(url.href!==expected.href||!['GET','POST','DELETE'].includes(init.method??'GET'))refuse('endpoint_denied');
-  if(init.method==='POST'){
-   let rpc;try{rpc=JSON.parse(init.body);}catch{refuse('protocol_denied');}
+  let rpc;if(init.method==='POST'){
+   try{rpc=JSON.parse(init.body);}catch{refuse('protocol_denied');}
    if(!['initialize','notifications/initialized','tools/list','tools/call'].includes(rpc.method))refuse('protocol_denied');
    if(rpc.method==='tools/call'&&!canonicalReadTool(rpc.params?.name))refuse('tool_denied');
   }
   const signal=AbortSignal.any([AbortSignal.timeout(30000),...(init.signal?[init.signal]:[])]);
-  const response=await fetcher(url,{...init,redirect:'manual',signal});
-  if(response.status===401||response.status===403){await response.body?.cancel();refuse('mcp_authorization_required');}
-  if(response.status>=300&&response.status<400){await response.body?.cancel();refuse('redirect_denied');}
-  if(!response.ok&&response.status!==405){await response.body?.cancel();refuse('provider_rejected');}
+  const stage=transportStage(init.method??'GET',rpc);let response;
+  const withRoute=diagnostic=>({...diagnostic,requestedTransport:'streamable_http',endpointPattern:endpointPattern(expected)});
+  try{response=await fetcher(url,{...init,redirect:'manual',signal});}catch(error){const diagnostic=networkDiagnostic(stage,error);refuse(diagnostic.networkCategory,withRoute(diagnostic));}
+  if(response.status===401||response.status===403)refuse('mcp_authorization_required',withRoute(await httpDiagnostic(response,stage)));
+  if(response.status>=300&&response.status<400)refuse('redirect_denied',withRoute(await httpDiagnostic(response,stage)));
+  if(!response.ok&&!(response.status===405&&(init.method??'GET')==='GET'))refuse('provider_rejected',withRoute(await httpDiagnostic(response,stage)));
   // A streaming cap applies before the SDK parses JSON/SSE, including long streams.
   let size=0;const stream=response.body?.pipeThrough(new TransformStream({transform(chunk,controller){size+=chunk.byteLength;if(size>1500000)refuse('response_limit');controller.enqueue(chunk);}}));
   return new Response(stream,{status:response.status,headers:response.headers});
  };
 }
-function contents(result){if(result?.isError)refuse('provider_tool_error');return (result?.content??[]).filter(c=>c.type==='text').map(c=>{try{return JSON.parse(c.text);}catch{return c.text;}});}
+function contents(result){if(result?.isError)refuse('provider_tool_error',toolDiagnostic(result));return (result?.content??[]).filter(c=>c.type==='text').map(c=>{try{return JSON.parse(c.text);}catch{return c.text;}});}
 function findAccount(value,accountId,primaryEmail){if(Array.isArray(value))return value.some(v=>findAccount(v,accountId,primaryEmail));if(value&&typeof value==='object'){if(String(value.accountId??'')===accountId&&value.primaryEmailAddress?.toLowerCase()===primaryEmail.toLowerCase())return true;return Object.values(value).some(v=>findAccount(v,accountId,primaryEmail));}return false;}
 export async function execute(config,request,{fetcher=fetch,clientFactory=()=>new Client({name:'zoho-local-readonly',version:'0.1.0'},{capabilities:{},autoFulfill:false})}={}){
  if(!request||typeof request!=='object')refuse('invalid_request');

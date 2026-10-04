@@ -6,7 +6,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "test": "node --test local.test.mjs dmarc.test.mjs transport.test.mjs inspect-auth.test.mjs mcp-policy.test.mjs initialize-summary.test.mjs owner-read-check.test.mjs read-tool-policy.test.mjs"
+    "test": "node --test local.test.mjs dmarc.test.mjs transport.test.mjs inspect-auth.test.mjs mcp-policy.test.mjs initialize-summary.test.mjs owner-read-check.test.mjs read-tool-policy.test.mjs safe-mcp-diagnostic.test.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/client": "2.3.0",
