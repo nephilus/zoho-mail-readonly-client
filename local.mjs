@@ -2,8 +2,9 @@ import {Client,StreamableHTTPClientTransport} from '@modelcontextprotocol/client
 import {boundedBytes,getDmarcReport} from './dmarc.mjs';
 import {createTransport,safeDiagnostic} from './transport.mjs';
 import {mcpEndpoint} from './mcp-policy.mjs';
+import {READ_TOOLS,canonicalReadTool,schemaAccepts} from './read-tool-policy.mjs';
 
-export const READ_TOOLS=Object.freeze(['getMailAccounts','getAccountDetails','listEmails','SearchEmails','getMessageContent','getMessageAttachmentInfo','getAllFolders','getFolder']);
+export {READ_TOOLS};
 
 class LocalFailure extends Error{constructor(reason){super('Local Zoho request unavailable');this.reason=reason;}}
 function refuse(reason){throw new LocalFailure(reason);}
@@ -23,7 +24,7 @@ export function guardedFetch(config,fetcher=fetch){
   if(init.method==='POST'){
    let rpc;try{rpc=JSON.parse(init.body);}catch{refuse('protocol_denied');}
    if(!['initialize','notifications/initialized','tools/list','tools/call'].includes(rpc.method))refuse('protocol_denied');
-   if(rpc.method==='tools/call'&&!READ_TOOLS.includes(rpc.params?.name))refuse('tool_denied');
+   if(rpc.method==='tools/call'&&!canonicalReadTool(rpc.params?.name))refuse('tool_denied');
   }
   const signal=AbortSignal.any([AbortSignal.timeout(30000),...(init.signal?[init.signal]:[])]);
   const response=await fetcher(url,{...init,redirect:'manual',signal});
@@ -49,24 +50,26 @@ export async function execute(config,request,{fetcher=fetch,clientFactory=()=>ne
   return {ok:true,result};
  }
  if(!['list_tools','call'].includes(request.action))refuse('unsupported_action');
- if(request.action==='call'&&!READ_TOOLS.includes(request.name))refuse('tool_denied');
+ if(request.action==='call'&&!canonicalReadTool(request.name))refuse('tool_denied');
  endpoint(config.mcpUrl,config.mcpHost);const client=clientFactory();const transport=new StreamableHTTPClientTransport(endpoint(config.mcpUrl,config.mcpHost),{fetch:guardedFetch(config,fetcher),requestInit:config.mcpBearerToken?{headers:{Authorization:'Bearer '+config.mcpBearerToken}}:{}});
  try{
   await client.connect(transport);const discovery=await client.listTools();
   if(discovery.tools.length>100)refuse('tool_count_limit');
   // Fail closed if the configured provider server has any write/unknown tool.
-  if(discovery.tools.some(t=>!READ_TOOLS.includes(t.name)||t.annotations?.readOnlyHint===false||t.annotations?.destructiveHint===true))refuse('server_not_readonly');
+  if(discovery.tools.some(t=>!canonicalReadTool(t.name)||t.annotations?.readOnlyHint===false||t.annotations?.destructiveHint===true))refuse('server_not_readonly');
+  const canonicalNames=discovery.tools.map(t=>canonicalReadTool(t.name));if(new Set(canonicalNames).size!==canonicalNames.length)refuse('ambiguous_read_tool');
   if(request.action==='list_tools')return {ok:true,tools:sanitize(discovery.tools.map(t=>({name:t.name,inputSchema:t.inputSchema})),config)};
-  if(!discovery.tools.some(t=>t.name===request.name))refuse('tool_unavailable');
+  const requested=canonicalReadTool(request.name);const selected=discovery.tools.find(t=>canonicalReadTool(t.name)===requested);if(!selected)refuse('tool_unavailable');
   const account=config.accountId;if(!/^\d{1,30}$/.test(account??''))refuse('account_setup_required');
   const args=request.arguments??{};if(!args||Array.isArray(args)||typeof args!=='object'||JSON.stringify(args).length>8192)refuse('invalid_arguments');
   for(const [key,value] of Object.entries(args)){if(/account.?id/i.test(key)&&String(value)!==account)refuse('account_denied');if(/^(limit|count|page.?size)$/i.test(key)&&(!Number.isInteger(value)||value<1||value>50))refuse('paging_denied');if(/(mark.?read|read.?status|update|delete|send)/i.test(key))refuse('argument_denied');}
-  if(!discovery.tools.some(t=>t.name==='getMailAccounts'))refuse('account_verification_unavailable');
-  const accounts=contents(await client.callTool({name:'getMailAccounts',arguments:{}}));if(!findAccount(accounts,account,config.primaryEmail))refuse('account_response_unverified');
-  if(request.name==='getMailAccounts')return {ok:true,result:{accountId:account,primaryEmailAddress:config.primaryEmail}};
+  const accountTool=discovery.tools.find(t=>canonicalReadTool(t.name)==='getMailAccounts');if(!accountTool)refuse('account_verification_unavailable');
+  if(!schemaAccepts(accountTool.inputSchema,{})||!schemaAccepts(selected.inputSchema,args))refuse('schema_unsupported');
+  const accounts=contents(await client.callTool({name:accountTool.name,arguments:{}}));if(!findAccount(accounts,account,config.primaryEmail))refuse('account_response_unverified');
+  if(requested==='getMailAccounts')return {ok:true,result:{accountId:account,primaryEmailAddress:config.primaryEmail}};
   // Require the pinned account explicitly for account-scoped tool calls.
   if(!Object.entries(args).some(([k,v])=>/^accountId$/i.test(k)&&String(v)===account))refuse('account_argument_required');
-  return {ok:true,result:sanitize(contents(await client.callTool({name:request.name,arguments:args})),config)};
+  return {ok:true,result:sanitize(contents(await client.callTool({name:selected.name,arguments:args})),config)};
  }finally{await client.close().catch(()=>{});}
 }
 export function restDiagnostic(e){return {ok:false,status:'rest_unavailable',diagnostic:safeDiagnostic(e)};}

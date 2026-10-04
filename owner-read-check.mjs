@@ -1,12 +1,13 @@
 import {Client,StreamableHTTPClientTransport} from '@modelcontextprotocol/client';
-import {READ_TOOLS,guardedFetch,sanitize,safeLocalError} from './local.mjs';
+import {guardedFetch,sanitize,safeLocalError} from './local.mjs';
+import {canonicalReadTool,schemaAccepts} from './read-tool-policy.mjs';
 import {mcpEndpoint} from './mcp-policy.mjs';
 
 const statusError=status=>Object.assign(Error('Read check stopped'),{safeStatus:status});
 function schemaArgs(tool,values){
- const schema=tool?.inputSchema;if(schema?.type!=='object'||!Array.isArray(schema.required??[])||(schema.required??[]).some(key=>!(key in values)))return null;
+ const schema=tool?.inputSchema;if(schema?.type!=='object'||!Array.isArray(schema.required??[])||(schema.required??[]).some(key=>!Object.hasOwn(values,key)))return null;
  const args={};for(const [key,value]of Object.entries(values)){const spec=schema.properties?.[key];if(!spec)continue;if(spec.type!==(typeof value==='number'?'integer':'string'))return null;if(typeof value==='number'&&((spec.minimum??-Infinity)>value||(spec.maximum??Infinity)<value))return null;args[key]=value;}
- if((schema.required??[]).some(key=>!(key in args)))return null;return args;
+ if(!schemaAccepts(schema,args))return null;return args;
 }
 function decoded(result){
  if(result?.isError)throw statusError('provider_tool_error');
@@ -26,8 +27,8 @@ function safeName(name,config){
 }
 function schemaStatus(tool,config){
  if(tool.inputSchema?.type!=='object')return 'unsupported';
- if(tool.name==='getMailAccounts')return schemaArgs(tool,{})?'compatible':'unsupported';
- if(tool.name==='listEmails'){
+ if(canonicalReadTool(tool.name)==='getMailAccounts')return schemaArgs(tool,{})?'compatible':'unsupported';
+ if(canonicalReadTool(tool.name)==='listEmails'){
   const props=tool.inputSchema.properties??{};if(props.accountId?.type!=='string'||props.limit?.type!=='integer')return 'unsupported';
   const values={accountId:'0',limit:1};if(props.start)values.start=1;if(props.folderId&&config.folderId)values.folderId=config.folderId;
   return schemaArgs(tool,values)?'compatible':'unsupported';
@@ -43,9 +44,9 @@ export async function ownerReadCheck(config,{fetcher=fetch,clientFactory=()=>new
    const response=await client.listTools(cursor?{cursor}:undefined);tools.push(...response.tools);if(tools.length>100)throw statusError('tool_count_limit');cursor=response.nextCursor;if(!cursor)break;if(seen.has(cursor))throw statusError('tool_inventory_incomplete');seen.add(cursor);
   }if(cursor)throw statusError('tool_inventory_incomplete');
   const names=new Set();let denied=false;
-  for(const tool of tools){const allowed=READ_TOOLS.includes(tool.name)&&tool.annotations?.readOnlyHint!==false&&tool.annotations?.destructiveHint!==true;if(names.has(tool.name))denied=true;names.add(tool.name);if(!allowed)denied=true;summary.tools.push({name:safeName(tool.name,config),allowed,schema:schemaStatus(tool,config)});}
+  for(const tool of tools){const canonical=canonicalReadTool(tool.name);const allowed=!!canonical&&tool.annotations?.readOnlyHint!==false&&tool.annotations?.destructiveHint!==true;if(canonical&&names.has(canonical))denied=true;names.add(canonical??tool.name);if(!allowed)denied=true;summary.tools.push({name:safeName(tool.name,config),allowed,schema:schemaStatus(tool,config)});}
   if(denied)throw statusError('server_not_readonly');
-  const accounts=tools.find(t=>t.name==='getMailAccounts'),list=tools.find(t=>t.name==='listEmails');
+  const accounts=tools.find(t=>canonicalReadTool(t.name)==='getMailAccounts'),list=tools.find(t=>canonicalReadTool(t.name)==='listEmails');
   if(!accounts||!list)throw statusError('required_tool_unavailable');
   const accountArgs=schemaArgs(accounts,{});if(!accountArgs)throw statusError('account_schema_unsupported');
   const props=list.inputSchema?.properties??{};
